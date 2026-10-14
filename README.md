@@ -42,4 +42,5 @@ Compose projects for the AI services running on podman hosts.
 
 | Project | Host | What it runs |
 |---|---|---|
-| [`llama-server`](projects/llama-server/) | 192.168.30.254 | llama.cpp servers (ROCm + CUDA) + ComfyUI + ComfyUI MCP gateway |
+| [`llama-server`](projects/llama-server/) | 192.168.30.254 | llama.cpp LLM servers (ROCm + CUDA) |
+| [`comfyui`](projects/comfyui/) | 192.168.30.254 | ComfyUI (P40) + ComfyUI MCP gateway |

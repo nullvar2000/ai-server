@@ -48,9 +48,18 @@ RUN comfy set-default /opt/ComfyUI
 # supergateway is a Node app (requires node >= 20); the base image has
 # no node and no curl (download via python). Official Node tarball into
 # the user prefix, then supergateway pinned by exact npm version.
+# -g is required: a local `npm install --prefix` puts bin links in
+# <prefix>/node_modules/.bin, but the runtime PATH and the compose
+# entrypoint both point at <prefix>/bin (where a global install links).
+# 4.2.0-rc.2 (npm "next" tag) is the first line with --apiKey and
+# --healthCheck server (added in 4.2.0-rc.0); 4.1.0 SILENTLY ignores
+# both unknown flags, i.e. an "authenticated" gateway on 4.1.0 is wide
+# open — do not "downgrade" to the "latest" tag (4.1.0). rc.2 is
+# release-candidate quality: changelog says 4.1.0 command lines run
+# unchanged, verified against 4.1.0 with 30k random sessions.
 ARG NODE_VERSION=v22.23.3
 ARG NODE_SHA256=1084aa36196bba4c3a5e69a1ee388a6e4ff729dad09445fbcd434b28fe3c24af
-ARG SUPERGATEWAY_VERSION=4.1.0
+ARG SUPERGATEWAY_VERSION=4.2.0-rc.2
 RUN set -eux; \
     python3 -c "import urllib.request; urllib.request.urlretrieve('https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.gz', '/tmp/node.tar.gz')"; \
     echo "${NODE_SHA256}  /tmp/node.tar.gz" | sha256sum -c -; \
@@ -58,7 +67,7 @@ RUN set -eux; \
     tar -xzf /tmp/node.tar.gz -C /home/comfyui/.local --strip-components=1; \
     rm /tmp/node.tar.gz; \
     node --version; \
-    npm install --prefix /home/comfyui/.local --no-audit --no-fund "supergateway@${SUPERGATEWAY_VERSION}"; \
+    npm install -g --prefix /home/comfyui/.local --no-audit --no-fund "supergateway@${SUPERGATEWAY_VERSION}"; \
     supergateway --help >/dev/null
 
 EXPOSE 8188
