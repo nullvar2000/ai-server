@@ -1,4 +1,4 @@
-ARG COMFYUI_TAG=v0.34.0
+ARG COMFYUI_TAG=v0.40.0
 ARG COMFYUI_MANAGER_TAG=4.2.2
 ARG TORCH_BASE=docker.io/pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime
 FROM ${TORCH_BASE}

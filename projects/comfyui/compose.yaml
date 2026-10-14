@@ -2,7 +2,7 @@ services:
   comfyui:
     # Tag bump: first build with the MCP layer (see Containerfile).
     # Bump the counter on every rebuild and keep this in sync.
-    image: localhost/comfyui:v0.34.0-1
+    image: localhost/comfyui:v0.40.0-1
     restart: unless-stopped
     ports:
       - "8188:8188"
@@ -18,7 +18,7 @@ services:
   comfyui-mcp:
     # MCP gateway: supergateway (stdio -> Streamable HTTP) wrapping
     # comfy-mcp, same image as comfyui. No GPU needed.
-    image: localhost/comfyui:v0.34.0-1
+    image: localhost/comfyui:v0.40.0-1
     # The image's ENTRYPOINT is ["python", "main.py"] — override it for
     # the gateway. supergateway lives in the non-root user's prefix
     # (see Containerfile).
