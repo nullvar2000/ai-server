@@ -1,19 +1,16 @@
 # ComfyUI MCP — host 192.168.30.254
 
-Out-of-cluster setup: the podman-hosted ComfyUI (NVIDIA P40, `nvidia.com/gpu=1`)
-exposed as an **authenticated MCP server** (Streamable HTTP, Bearer key) so that
-Open WebUI (in-cluster) and laptop agents can drive it. **Zero Kubernetes changes**
-— `mcpo` stays disabled. Design + rationale: `tmp/plans/2026-10-10-comfyui-mcp-host.md`
-(scratch, not versioned).
+The podman-hosted ComfyUI (NVIDIA P40, `nvidia.com/gpu=1`) exposed as an
+**authenticated MCP server** (Streamable HTTP, Bearer key) so that Open WebUI
+and laptop agents can drive it.
 
 This directory is the **source of truth** for the two files it ships; the copies
-on `192.168.30.254` are deployed from here (manual — nothing here is
-Flux-synced).
+on `192.168.30.254` are deployed from here (manually).
 
 ## Architecture
 
 ```
-Open WebUI pods / laptop agents / in-cluster agents
+Open WebUI / laptop agents / other agents
    |  Bearer $COMFYUI_MCP_KEY
    v
 comfyui-mcp :8001    supergateway (stateless Streamable HTTP, /mcp + /healthz)
@@ -42,7 +39,7 @@ Key properties:
   local-targeting command.
 - **LAN-IP target** (`http://192.168.30.254:8188`, not the compose name
   `http://comfyui:8188`) so the `/view?fn=...` output URLs returned by MCP
-  tools are fetchable from cluster pods and the laptop. Cost: one extra ufw
+  tools are fetchable by every consumer on the LAN. Cost: one extra ufw
   rule for the podman bridge subnet (below).
 - The gateway container **shares the `models` bind** with `comfyui`, so
   models downloaded via MCP land where ComfyUI can see them.
@@ -52,7 +49,7 @@ Key properties:
 
 ## The image
 
-`Containerfile` (replaces `~/.podman/Containerfiles/comfyui` on the host).
+`Containerfile`, built on the host.
 Base: `pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime` (Ubuntu 24.04, Python
 3.12.3). The MCP layer installs as the non-root `comfyui` user (user site /
 user prefix, no root):
@@ -99,12 +96,9 @@ podman run --rm localhost/comfyui:v0.34.0-2 sh -c \
    (No `.env` exists in that project dir today; the llama services use
    `--api-key-file`, no collision. Keep the quotes — compose parses unquoted
    values loosely.)
-2. **Compose:** diff this repo's `compose.yaml` against the live
-   `/home/paul/llama-server/container-compose.yaml` (expected delta: the
-   `comfyui-mcp` service + the comfyui image tag), then copy it over as
-   `compose.yaml` (compose-spec default name — `podman compose` auto-detects
-   it), delete the legacy `container-compose.yaml`, and
-   `cd /home/paul/llama-server && podman compose up -d`.
+2. **Compose:** copy `compose.yaml` to `/home/paul/llama-server/`
+   (`compose.yaml` is the compose-spec default name — `podman compose`
+   auto-detects it), then `cd /home/paul/llama-server && podman compose up -d`.
    Note: because the comfyui image tag changes, `up -d` recreates the
    comfyui container (~1 min GPU downtime — expected once).
 3. **ufw** — see runbook below.
@@ -125,7 +119,7 @@ for ip in 192.168.30.101 192.168.30.102 192.168.30.103 \
           192.168.30.121 192.168.30.122 192.168.30.123; do
   sudo ufw allow from "$ip" to any port 8188,8001 proto tcp
 done
-sudo ufw allow from 10.244.0.0/16 to any port 8188,8001 proto tcp   # k8s pod CIDR
+sudo ufw allow from 10.244.0.0/16 to any port 8188,8001 proto tcp   # Open WebUI pod network
 sudo ufw allow from 10.89.0.0/24  to any port 8188 proto tcp        # podman bridge: mcp -> comfyui
 sudo ufw allow from <LAPTOP_IP> to any port 8188,8001 proto tcp
 sudo ufw --dry-run enable
@@ -133,10 +127,10 @@ sudo ufw enable
 sudo ufw status verbose
 ```
 
-- Node IPs: the 10 current Talos nodes (`kubectl get nodes -o wide`); add any
-  future node's IP. Both node IPs and pod CIDR are allowed because pod→LAN
-  egress may carry the pod IP (Calico, no SNAT) or the node IP (SNATed
-  ClusterIP traffic).
+- 192.168.30.101–.123 are the machine IPs behind the Open WebUI deployment;
+  allow both them and the pod network (10.244.0.0/16) because traffic to this
+  host can be source-addressed as either a machine IP or a pod IP. Add any
+  future machine IP to the loop above.
 - `10.89.0.0/24` is the compose bridge (`llama-server_default`); needed only
   because the gateway reaches ComfyUI via the host's published 8188 (hairpin).
   8001 stays closed to it.
@@ -191,9 +185,8 @@ Gates:
    honored end-to-end.
 2. **E2E** — `run_workflow` with a known workflow JSON → job appears in
    `jobs` → P40 renders → output retrievable (`fetch_outputs` / `/view?`).
-3. **Firewall matrix** — laptop + a cluster node: 200 on 8188 and
-   `:8001/healthz`; an off-list LAN device: timeout/refused on both.
-4. **No cluster impact** — `kubectl get pods -A` unchanged.
+ 3. **Firewall matrix** — laptop + one of the allowlisted servers: 200 on
+    8188 and `:8001/healthz`; an off-list LAN device: timeout/refused on both.
 
 ## Consumer configuration (manual)
 
@@ -207,9 +200,7 @@ Gates:
    claude mcp add --transport http comfyui http://192.168.30.254:8001/mcp \
      --header "Authorization: Bearer $COMFYUI_MCP_KEY"
    ```
-3. **In-cluster agents** (e.g. hermes-agent): same URL — the
-   cluster→LAN precedent is open-webui's `ollamaUrls`
-   (`flux/apps/ai/open-webui/helm-release.yaml`).
+ 3. **Other agents** (e.g. hermes-agent): same URL + Bearer header.
 4. **Optional uptime-kuma monitor**: HTTP(s), `http://192.168.30.254:8001/healthz`,
    60 s — with `--healthCheck server` this is a real MCP initialize+ping, not
    just a port check.
@@ -234,5 +225,4 @@ Gates:
 2. Delete the ufw rules added above; `sudo ufw reload`.
 3. Consumers: delete the OWUI tool server, `claude mcp remove comfyui`,
    remove the uptime-kuma monitor.
-4. Repo: revert this directory's commit (inert on the host). No cluster
-   changes to revert — `mcpo` stays disabled throughout.
+ 4. Repo: revert this directory's commit (inert on the host).

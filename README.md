@@ -1,7 +1,6 @@
 # ai-server
 
-Compose projects for out-of-cluster AI services (podman hosts, not the
-Talos/K8s cluster — that lives in the `kubernetes` repo).
+Compose projects for the AI services running on podman hosts.
 
 ## Layout
 
