@@ -1,0 +1,73 @@
+ARG COMFYUI_TAG=v0.34.0
+ARG COMFYUI_MANAGER_TAG=4.2.2
+ARG TORCH_BASE=docker.io/pytorch/pytorch:2.14.0-cuda12.6-cudnn9-runtime
+FROM ${TORCH_BASE}
+
+ARG COMFYUI_TAG
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 10013 --shell /bin/bash comfyui
+
+USER comfyui
+
+WORKDIR /opt/ComfyUI
+
+RUN git clone --depth 1 --branch ${COMFYUI_TAG} https://github.com/Comfy-Org/ComfyUI.git /opt/ComfyUI
+
+RUN pip install --break-system-packages --no-cache-dir -r requirements.txt \
+    && pip install --break-system-packages --no-cache-dir -r manager_requirements.txt
+
+RUN mkdir -p models output input user temp \
+    && chown -R comfyui:comfyui /opt/ComfyUI
+
+# ---- MCP layer: comfy-cli + comfy-mcp + supergateway ----
+# Everything below runs as the non-root `comfyui` user: pip uses the
+# user site and npm uses --prefix, so no root access is needed.
+# /home/comfyui/.local/bin is NOT on the default PATH — add it here,
+# otherwise neither `comfy`, `comfy-mcp`, `node` nor `supergateway`
+# is resolvable at build time or in the runtime containers.
+ENV PATH="/home/comfyui/.local/bin:${PATH}"
+
+# comfy-cli: the engine comfy-mcp shells out to (deliberately not a
+# declared dep of comfy-mcp; it enforces the >=1.14.0 floor at runtime).
+# comfy-mcp: the official stdio MCP server.
+RUN pip install --break-system-packages --no-cache-dir \
+        "comfy-cli>=1.14.0" comfy-mcp
+
+# Default workspace for workspace-aware comfy-cli verbs (freshness,
+# model download, ...): the ComfyUI checkout above.
+RUN comfy set-default /opt/ComfyUI
+
+# supergateway is a Node app (requires node >= 20); the base image has
+# no node and no curl (download via python). Official Node tarball into
+# the user prefix, then supergateway pinned by exact npm version.
+ARG NODE_VERSION=v22.23.3
+ARG NODE_SHA256=1084aa36196bba4c3a5e69a1ee388a6e4ff729dad09445fbcd434b28fe3c24af
+ARG SUPERGATEWAY_VERSION=4.1.0
+RUN set -eux; \
+    python3 -c "import urllib.request; urllib.request.urlretrieve('https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.gz', '/tmp/node.tar.gz')"; \
+    echo "${NODE_SHA256}  /tmp/node.tar.gz" | sha256sum -c -; \
+    mkdir -p /home/comfyui/.local; \
+    tar -xzf /tmp/node.tar.gz -C /home/comfyui/.local --strip-components=1; \
+    rm /tmp/node.tar.gz; \
+    node --version; \
+    npm install --prefix /home/comfyui/.local --no-audit --no-fund "supergateway@${SUPERGATEWAY_VERSION}"; \
+    supergateway --help >/dev/null
+
+EXPOSE 8188
+
+VOLUME ["/opt/ComfyUI/models", "/opt/ComfyUI/output", "/opt/ComfyUI/input", "/opt/ComfyUI/user", "/opt/ComfyUI/temp", "/opt/ComfyUI/custom_nodes"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8188/system_stats')" || exit 1
+
+ENTRYPOINT ["python", "main.py"]
+CMD ["--listen", "0.0.0.0", "--enable-manager"]
+

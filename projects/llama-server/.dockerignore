@@ -1,0 +1,7 @@
+# Build context hygiene: the Containerfile clones ComfyUI from GitHub and
+# copies nothing from this directory, but keep secrets and docs out of the
+# context anyway in case a COPY is ever added.
+.env
+.env.*
+*.md
+.git

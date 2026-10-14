@@ -1,0 +1,127 @@
+services:
+  llama-server-rocm:
+    image: ghcr.io/ggml-org/llama.cpp:server-rocm-b10731
+    restart: unless-stopped
+    ports:
+      - "9931:9931"
+    environment:
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0 
+      - HIP_VISIBLE_DEVICES="0,1"
+    devices:
+      # Critical for AMD ROCm compute capability
+      - "/dev/kfd:/dev/kfd"
+      - "/dev/dri:/dev/dri"
+    group_add:
+      - keep-groups
+    volumes:
+      # Map your local models folder to the container's /models folder
+      - /home/paul/llama-server/models:/models
+      - /home/paul/llama-server/secrets:/secrets:ro
+    command: >
+      --model /models/hf/unsloth/Qwen3.8-27B-UD-Q8_K_XL.gguf
+      --alias qwen3.8-27b
+      --ctx-size 262144
+      --flash-attn on
+      --n-gpu-layers 99
+      --split-mode layer
+      --ubatch-size 384
+      --batch-size 4096
+      --no-mmap
+      --spec-type draft-mtp
+      --spec-draft-n-max 2
+      --api-key-file /secrets/llama.key
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      --metrics
+      --port 9931
+      --host 0.0.0.0
+  llama-server-cuda:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda12-b10731
+    restart: unless-stopped
+    ports:
+      - "9932:9932"
+    environment:
+      - GGML_CUDA_FORCE_MMQ=1
+    devices:
+      - "nvidia.com/gpu=0"
+    group_add:
+      - keep-groups
+    volumes:
+      # Map your local models folder to the container's /models folder
+      - /home/paul/llama-server/models:/models
+      - /home/paul/llama-server/secrets:/secrets:ro
+    command: >
+      --models-preset /models/models-preset.ini
+      --models-max 1
+      --api-key-file /secrets/llama.key
+      --metrics
+      --port 9932
+      --host 0.0.0.0
+  comfyui:
+    # Tag bump: first build with the MCP layer (see Containerfile).
+    # Bump the counter on every rebuild and keep this in sync.
+    image: localhost/comfyui:v0.34.0-2
+    restart: unless-stopped
+    ports:
+      - "8188:8188"
+    devices:
+      - "nvidia.com/gpu=1"
+    group_add:
+      - keep-groups
+    volumes:
+      # Map your local models folder to the container's /models folder
+      - /home/paul/.podman/volumes/comfyui/models:/opt/ComfyUI/models
+      - /home/paul/.podman/volumes/comfyui/output:/opt/ComfyUI/output
+      - /home/paul/.podman/volumes/comfyui/user:/opt/ComfyUI/user
+  comfyui-mcp:
+    # MCP gateway: supergateway (stdio -> Streamable HTTP) wrapping
+    # comfy-mcp, same image as comfyui. No GPU needed.
+    image: localhost/comfyui:v0.34.0-2
+    # The image's ENTRYPOINT is ["python", "main.py"] — override it for
+    # the gateway. supergateway lives in the non-root user's prefix
+    # (see Containerfile).
+    entrypoint: ["/home/comfyui/.local/bin/supergateway"]
+    # Array form on purpose: compose string commands are NOT run through
+    # a shell, so the folded-string form would mangle --stdio "comfy-mcp".
+    command:
+      - "--stdio"
+      - "comfy-mcp"
+      - "--outputTransport"
+      - "streamableHttp"
+      - "--port"
+      - "8001"
+      - "--host"
+      - "0.0.0.0"
+      - "--apiKey"
+      - "${COMFYUI_MCP_KEY:?set COMFYUI_MCP_KEY in .env}"
+      - "--healthEndpoint"
+      - "/healthz"
+      - "--healthCheck"
+      - "server"
+    environment:
+      # comfy-cli-level redirect: points EVERY local-targeting verb
+      # (env/run/jobs/nodes/system-stats/upload/download) at the ComfyUI
+      # container. COMFYUI_URL alone would only remap the submit/job
+      # tools; discovery (server_info, system_stats, models) would hit
+      # dead 127.0.0.1:8188 inside this container.
+      # LAN IP (not the compose name) so the /view? output URLs returned
+      # by tools are fetchable from the cluster and the laptop.
+      - COMFY_LOCAL_URL=http://192.168.30.254:8188
+    depends_on:
+      - comfyui
+    ports:
+      - "8001:8001"
+    # Shared with the comfyui service so models downloaded via MCP
+    # (comfy-cli workspace = /opt/ComfyUI) land where ComfyUI sees them.
+    volumes:
+      - /home/paul/.podman/volumes/comfyui/models:/opt/ComfyUI/models
+    restart: unless-stopped
+    # The image's HEALTHCHECK probes 127.0.0.1:8188, which is dead in
+    # this container — override with the gateway's own health endpoint.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz')\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+

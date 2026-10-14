@@ -1,0 +1,5 @@
+# Host-local secrets — each project's .env lives next to its compose.yaml
+# and is never committed (see projects/*/README.md for the .env.example).
+.env
+.env.*
+!.env.example
