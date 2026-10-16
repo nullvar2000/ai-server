@@ -10,6 +10,13 @@ services:
       - "nvidia.com/gpu=1"
     group_add:
       - keep-groups
+    # Replaces the image CMD (--listen 0.0.0.0 --enable-manager) plus
+    # --enable-assets: v0.40.0's asset catalog (the UI's "Assets" page) is
+    # off by default, so generated assets were invisible after restart even
+    # though the files were safe in output/. With it on, every generation
+    # is registered in user/comfyui.db (bind-mounted) and the seeder
+    # back-scans existing output/input/models on first start.
+    command: ["--listen", "0.0.0.0", "--enable-manager", "--enable-assets"]
     volumes:
       # Map your local models folder to the container's /models folder
       - /home/paul/.podman/volumes/comfyui/models:/opt/ComfyUI/models
